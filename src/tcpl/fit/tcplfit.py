@@ -4,6 +4,7 @@ import numpy as np
 import pylab as pl
 import scipy as sp
 import re
+import copy
 
 #from IPython.core.debugger import set_trace
 
@@ -21,7 +22,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib as mpl
 from functools import reduce
 
-rtcpl = rpackages.importr('tcpl')
+rtcpl = rpackages.importr('tcplfit2')
 
 def fix_type(x):
     t = type(x)
@@ -41,8 +42,8 @@ def as_dict(vector):
         elif type(vector[i])!=rpy2.rinterface.NULLType:
             if len(vector[i]) == 1:
                 x = vector[i][0]
-                if not np.isnan(x):
-                    result[name]=x
+                #if not np.isnan(x):
+                result[name]=x
             else:
                 result[name] = list(vector[i])
     return result
@@ -83,13 +84,90 @@ def tcplFit(conc,resp,bmad=False):
     
     return R0
 
-def hillF(x,tp,ga,gw):
-    return tp/(1+10**((ga-x)*gw))
+def tcplFit2(conc,resp,cutoff=False):
+    kwargs={'conc':FloatVector(conc),
+            'resp':FloatVector(resp),
+            'bidirectional':True
+           }
+    if cutoff:
+        kwargs['cutoff']=1.0*cutoff
+    else:
+        kwargs['force.fit']=True
 
-def gnlsF(x,tp,ga,gw,lw,la):
-    gn = 1/(1+10**((ga-x)*gw))
-    ls = 1/(1+10**((x-la)*lw))
-    return tp*gn*ls
+    try:
+      Y0 = as_dict(rtcpl.tcplfit2_core(**kwargs))
+    except:
+      return {}
+    R0 = {}
+    Fits = []
+    #pd.DataFrame([{k:M[k] for k in ['aic','top','ac50'] if k in M} for M in [Y[m] for m in Y['modelnames']]])
+    for m in Y0['modelnames']:
+        M = Y0[m]
+        F = dict(model=m)
+        F.update({k:M[k] for k in ['aic','top','ac50'] if k in M})
+        Y0[m]['model']=m
+        PR = {}
+        for p in M.pop('pars'):
+          if p in M: 
+            PR[p]=M.pop(p)
+        F['params']=PR
+        SD = {}
+        if 'sds' in M:
+          for sd in M.pop('sds'):
+            if sd in M: 
+              SD[sd]=M.pop(sd)
+          F['param_sds']=SD
+        if 'modl' in M:
+          F['resp_fit'] = M.pop('modl') 
+        Fits.append(F)
+    Y0.pop('modelnames') 
+    R0['cr_data']=dict(conc=list(conc),resp=list(resp))
+    R0['fits']=Fits
+    
+    # FIgure out best fit
+    F1 = pd.DataFrame(Fits)
+    R0['best_fit']=F1.sort_values('aic').iloc[0].model
+    
+    return R0
+
+# exp2 f(x) = a*(e^(x/b)- 1)
+# exp3 f(x) = a*(e^((x/b)^p)- 1) 
+# exp4 f(x) = tp*(1-2^(-x/ga))
+# exp5 f(x) = tp*(1-2^(-(x/ga)^p))
+# poly1 f(x) = a*x
+# poly2 f(x) = a*(x/b + x^2/b^2)
+# pow  f(x) = a*x^p
+
+def poly1F(x=1,a=1,**kws):
+  return a*x
+
+def poly2F(x=1,a=1,b=1,**kws):
+  return a*(x/b + (x**2)/(b**2))
+
+def powF(x=1,a=1,p=1,**kws):
+  return a*(x**p)
+
+def hillF(x=1,tp=1,ga=1,p=1,**kws):
+  """f(x) = tp/[(1 + (ga/x)^p )]"""
+  return tp/(1 + (ga/x)**p)
+
+def gnlsF(x=1,tp=1,ga=1,p=1,la=1,q=1,**kws):
+  """gnls f(x) = tp/[(1 + (ga/x)^p )(1 + (x/la)^q )]"""
+  return tp/((1 + (ga/x)**p )*(1 + (x/la)**q))
+
+def exp2F(x=1,a=1,b=1,**kws):
+  return a*(np.exp(x/b)-1)
+
+def exp3F(x=1,a=1,b=1,p=1,**kws):
+  return a*(np.exp((x/b)**p)-1)
+
+def exp4F(x=1,tp=1,ga=1,**kws):
+  return tp*(1.0-2**(-x/ga))
+
+def exp5F(x=1,tp=1,ga=1,p=1,**kws):
+  """f(x) = tp*(1-2^(-(x/ga)^p))"""
+  return tp*(1.0-2**(-(x/ga)**p))
+
 
 def calc_Resp(Tcpl):
     BF = Tcpl['best_fit']
@@ -101,7 +179,8 @@ def calc_Resp(Tcpl):
         kw = {o:v for o,v in iter(BF.items()) if o in ['tp','ga','gw'] }
         model=hillF
     elif BF['model']=='gnls':
-        kw = {o:v for o,v in iter(BF.items()) if o in ['tp','ga','gw','la','lw'] }
+        kw = {k:v for o,v in iter(BF.items()) if 
+              o in ['tp','ga','gw','la','lw'] }
         model=gnlsF
     elif BF['model']=='cnst':
         kw = {}
@@ -181,3 +260,31 @@ def tcplPlot(Tcpl,ax=None,show_data=True,fnsz=8,r_max=None,
     ax.set_ylim(-0.2,r_max*1.1)    
     
     
+def calc_BMDs(Fit,BMR=[1,2,3],C=None,
+              ret='dict',add_info=False,
+              dbg=False):
+  """
+  Calculate benchmark doses corresponding to bmrs
+  """
+  ci,cf = C.min(),C.max()
+
+  BMD=[]
+  P = copy.deepcopy(Fit['params'])
+  
+  for bmr in BMR:
+    def bmdf(c): 
+      P['x']=c
+      return eval("{}F(**P)".format(Fit['model'])) - bmr
+    
+    try:
+        soln = optz.fsolve(bmdf,[ci,cf])
+        soln = soln[np.logical_and(soln>ci,soln<cf)]
+        bmd0 = np.min(soln)
+    except:
+        bmd0 = None
+        if dbg: print("Failed E %0.2f" % bmr)
+    else:
+        BMD.append(dict(bmr=bmr,bmd=bmd0))
+  
+  return BMD
+  

@@ -12,6 +12,7 @@ import scipy.optimize as optz
 import seaborn as sns
 from scipy import stats
 import rpy2.robjects.packages as rpackages
+import rpy2.robjects as robjects
 import seaborn as sns
 from statsmodels import robust
 from matplotlib.backends.backend_pdf import PdfPages
@@ -21,14 +22,39 @@ from functools import reduce
 
 rtcpl = rpackages.importr('tcplfit2')
 
-  
+from .rtcplhit import tcplhit2_in_r
+
+tcplhit2 = robjects.r(tcplhit2_in_r)
+
 class CurveFit:
     
-  def __init__(self,conc=[],resp=[],cutoff=None):
+  def __init__(self,conc=[],resp=[],cutoff=None,r_fill=0,hit_call=True):
     self.C = conc
     self.R = resp
     self.r0= cutoff
-
+    self.r_fill = r_fill
+    self.hit_call=hit_call
+    self.RFits= None
+    self.Fits = None
+    self.Hit  = None
+    
+  def __call__(self, conc=[],resp=[],cutoff=None, 
+               onesd=1,bmr_magic=1.349,**kwargs):
+    self.fit(conc=conc,resp=resp,cutoff=cutoff)
+    if self.hit_call: self.hit(onesd=onesd,bmr_magic=bmr_magic,cutoff=cutoff)
+    
+    
+  def get_summary(self,BMR=[-3,-2,-1,1,2,3]):
+    BF  = self.get_best_fit()
+    Summary = {k:v for k,v in BF.items() if k in['model','aic','top','ac50']}
+    #BMD = self.calc_bmds(BMR,model=None)
+    #if len(BMD)>0:
+    #  Summary.update(BMD[0])
+    if self.hit_call:
+      Summary.update(self.Hit.to_dict())
+    
+    return Summary
+    
   def fit(self,conc=[],resp=[],cutoff=None):
     self.C = conc if len(conc)>0 else self.C
     self.R = resp if len(resp)>0 else self.R
@@ -44,7 +70,8 @@ class CurveFit:
         kwargs['force.fit']=True
         
     try:
-      Y0 = self.as_dict(rtcpl.tcplfit2_core(**kwargs))
+      RFits = rtcpl.tcplfit2_core(**kwargs)
+      Y0 = self.as_dict(RFits)
     except:
       return {'failed':1}
 
@@ -69,14 +96,15 @@ class CurveFit:
           F['resp_fit'] = M.pop('modl') 
         Fits.append(F)
     Y0.pop('modelnames') 
+    
     self.CR_data=dict(conc=list(conc),resp=list(resp))
-    self.Fits=Fits
+    self.Fits  = Fits
+    self.RFits = RFits 
 
     # FIgure out best fit
     F1 = pd.DataFrame(Fits)
-    self.best=F1.sort_values('aic').iloc[0].model
-
-  
+    self.best=F1.sort_values('aic').iloc[0].model       
+    
   def as_dict(self,vector):
     """Convert an RPy2 ListVector to a Python dict"""
     result = {}
@@ -101,28 +129,41 @@ class CurveFit:
   def get_best_fit(self):
     return next(i for i in self.Fits if i['model']==self.best)
 
-  def plot_fits(self,C=10**np.linspace(0,2),interp=False):
-    pl.scatter(self.C,self.R)
+  def plot_fits(self,C=10**np.linspace(-1,2),interp=False,pli=pl,
+                best_only=False,lab=None):
+    pli.scatter(self.C,self.R)
     CRv = CRCurve()
     best= self.best
-    
+  
     for Fit in self.Fits:
       if not 'resp_fit' in Fit: continue
+      if best_only and Fit['model']!=best: continue
+        
       if interp:
         R = CRv.curve(Fit['model'],**Fit['params'])(C)
       else:
         R = Fit['resp_fit']
         C = self.C
-      label = Fit['model'] if Fit['model']!=best else best+' *'
-      pl.plot(C,R,label=label)
-    
-    pl.legend()
+      #label = Fit['model'] if Fit['model']!=best and show_best else best+' *'
+      label = Fit['model'] if not lab else lab
+      pli.plot(C,R,label=label)
+      #pli.hlines([self.r0,-1*self.r0],self.C.min(),self.C.max(),
+      #          linestyle='--',colors='grey')
+      pli.axhline(self.r0,lw=0.5,color='grey')
+      pli.axhline(-1*self.r0,lw=0.5,color='grey')
+      
+    if self.hit_call:
+      pli.axhline(self.Hit.bmr,lw=0.8,ls='-',color='green',label='bmr')
+      pli.axvspan(self.Hit.bmdl,self.Hit.bmdu,color='grey',alpha=0.2,label='bmd[ul]')
+      pli.axvline(self.Hit.bmd,lw=0.8,ls='--',color='green',label='bmc')
+      pli.axvline(self.Hit.ac50,lw=1,ls='-',color='red',label='ac50')
+    pli.legend(fontsize='small')
     
   def calc_bmds(self,BMR=[1,2,3],
                 model='hill',
                 dbg=False):
     """
-    Calculate benchmark doses corresponding to bmrs
+    Calculate benchmark doses corresponding to bmrs 
     """
     ci,cf = self.C.min(),self.C.max()
     if ci==0: ci += 1e-5
@@ -134,7 +175,7 @@ class CurveFit:
     for bmr in BMR:
       BMRF = CV.bmrf(F['model'],bmr=bmr,**P)
       try:
-          soln = optz.brentq(BMRF,ci,cf)
+          soln = optz.brentq(BMRF,ci,cf*10)
           bmd0 = np.min(soln)
       except:
           bmd0 = None
@@ -143,6 +184,17 @@ class CurveFit:
           BMD.append(dict(bmr=bmr,bmd=bmd0))
 
     return BMD
+  
+  def hit(self,onesd=1,bmr_magic=1.349,cutoff=None):
+    kwargs={'params':self.RFits,
+            'conc':FloatVector(self.C),
+            'resp':FloatVector(self.R),
+            'cutoff':cutoff or self.r0,
+            'onesd':onesd,
+            'bmr_magic':bmr_magic
+            }
+    RHit = tcplhit2(**kwargs)
+    self.Hit = pd.Series(self.as_dict(RHit)).dropna()
     
   
 class CRCurve:
@@ -158,7 +210,7 @@ class CRCurve:
   
   def bmrf(self,model,bmr=1,**params):
     F = self.curve(model,**params)
-    return lambda c: F(c)-bmr
+    return lambda c: np.abs(F(c))-bmr
   
   def poly1F(self,x=1,a=1,**kws):
     return a*x

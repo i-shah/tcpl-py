@@ -28,20 +28,26 @@ tcplhit2 = robjects.r(tcplhit2_in_r)
 
 class CurveFit:
     
-  def __init__(self,conc=[],resp=[],cutoff=None,r_fill=0,hit_call=True):
+  def __init__(self,conc=[],resp=[],cutoff=None,r_fill=0,hit_call=True,bmr_magic=1.349):
     self.C = conc
     self.R = resp
     self.r0= cutoff
+    self.bmr_magic=bmr_magic
     self.r_fill = r_fill
     self.hit_call=hit_call
     self.RFits= None
     self.Fits = None
     self.Hit  = None
     
-  def __call__(self, conc=[],resp=[],cutoff=None, 
-               onesd=1,bmr_magic=1.349,**kwargs):
+  def __call__(self, conc=[],resp=[],cutoff=None,assay=None, 
+               onesd=1,bmr_magic=None,summary=False,**kwargs):
+    bmr_magic = bmr_magic if bmr_magic else self.bmr_magic
     self.fit(conc=conc,resp=resp,cutoff=cutoff)
-    if self.hit_call: self.hit(onesd=onesd,bmr_magic=bmr_magic,cutoff=cutoff)
+    if self.hit_call: 
+      self.hit(onesd=onesd,bmr_magic=bmr_magic,cutoff=cutoff)
+    if assay: self.assay = assay
+    if summary:
+      return self.get_summary(BMR=[1])
     
     
   def get_summary(self,BMR=[-3,-2,-1,1,2,3]):
@@ -50,9 +56,9 @@ class CurveFit:
     #BMD = self.calc_bmds(BMR,model=None)
     #if len(BMD)>0:
     #  Summary.update(BMD[0])
-    if self.hit_call:
-      Summary.update(self.Hit.to_dict())
-    
+    if self.hit_call: Summary.update(self.Hit.to_dict())
+    if self.assay: Summary.update(dict(assay=self.assay))
+      
     return Summary
     
   def fit(self,conc=[],resp=[],cutoff=None):
@@ -186,6 +192,7 @@ class CurveFit:
     return BMD
   
   def hit(self,onesd=1,bmr_magic=1.349,cutoff=None):
+    
     kwargs={'params':self.RFits,
             'conc':FloatVector(self.C),
             'resp':FloatVector(self.R),

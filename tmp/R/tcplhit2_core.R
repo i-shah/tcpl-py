@@ -60,7 +60,8 @@
 #'   }
 #' @export
 #'
-tcplhit2_core <- function(params, conc, resp, cutoff, onesd, bmed = 0, conthits = T, aicc = F, identifiers = NULL) {
+tcplhit2_core_is <- function(params, conc, resp, cutoff, onesd, bmed = 0, conthits = T, 
+                           aicc = F, identifiers = NULL,bmr_magic=1.349) {
   # initialize parameters to NA
   a <- b <- tp <- p <- q <- ga <- la <- er <- top <- ac50 <- ac50_loss <- ac5 <- ac10 <- ac20 <- acc <- ac1sd <- bmd <- NA_real_
   bmdl <- bmdu <- caikwt <- mll <- NA_real_
@@ -127,7 +128,7 @@ tcplhit2_core <- function(params, conc, resp, cutoff, onesd, bmed = 0, conthits 
     hitcall <- hitloginner(conc, resp, top, cutoff, ac50)
   }
 
-  bmr <- onesd * 1.349 # magic bmr is hard-coded
+  bmr <- onesd * bmr_magic 
   if (hitcall > 0) {
 
     # fill ac's; can put after hit logic

@@ -27,7 +27,13 @@ from .rtcplhit import tcplhit2_in_r
 tcplhit2 = robjects.r(tcplhit2_in_r)
 
 class CurveFit:
-    
+  """
+  Python wrapper and utility functions for R/tcplfit2 package.
+  Most errors arise due to type mapping for conc, resp and cutoff from Py to R
+  Some errors arise when fit fails and exceptions are not handled gracefully :) 
+  Keep us posted about bugs
+  """  
+  
   def __init__(self,conc=[],resp=[],cutoff=None,r_fill=0,hit_call=True,bmr_magic=1.349):
     self.C = conc
     self.R = resp
@@ -35,6 +41,7 @@ class CurveFit:
     self.bmr_magic=bmr_magic
     self.r_fill = r_fill
     self.hit_call=hit_call
+    self.assay=None
     self.RFits= None
     self.Fits = None
     self.Hit  = None
@@ -42,8 +49,9 @@ class CurveFit:
   def __call__(self, conc=[],resp=[],cutoff=None,assay=None, 
                onesd=1,bmr_magic=None,summary=False,**kwargs):
     bmr_magic = bmr_magic if bmr_magic else self.bmr_magic
-    self.fit(conc=conc,resp=resp,cutoff=cutoff)
-    if self.hit_call: 
+    self.fit(conc=conc,resp=resp,cutoff=float(cutoff))
+    
+    if self.hit_call and self.best!='cnst': 
       self.hit(onesd=onesd,bmr_magic=bmr_magic,cutoff=cutoff)
     if assay: self.assay = assay
     if summary:
@@ -56,7 +64,7 @@ class CurveFit:
     #BMD = self.calc_bmds(BMR,model=None)
     #if len(BMD)>0:
     #  Summary.update(BMD[0])
-    if self.hit_call: Summary.update(self.Hit.to_dict())
+    if self.hit_call and self.best!='cnst': Summary.update(self.Hit.to_dict())
     if self.assay: Summary.update(dict(assay=self.assay))
       
     return Summary
@@ -250,4 +258,23 @@ class CRCurve:
     return tp*(1.0-2**(-(x/ga)**p))
   
   
+class CRCurveFromFit(CRCurve):
   
+  def __init__(self,*args,**kwargs):
+    CRCurve.__init__(self,*args,**kwargs)
+    self.Fit = None
+    
+  def __call__(self,*args,**kwargs):
+    self.setFit(*args,**kwargs)
+    
+  def setFit(self,fit,C=[]):
+    self.Fit = fit
+    self.C   = pd.Series(self.Fit['conc'].split('|')).astype(np.float)
+    self.R   = pd.Series(self.Fit['resp'].split('|')).astype(np.float)
+    self.Cp  = C if len(C)>0 else self.C
+    self.Rp  = self.curve(**(self.Fit))(self.Cp)
+    
+  def plot(self,pli=pl,lab=None,data=False,data_col='grey'):
+    label = lab if lab else self.Fit.get('assay')
+    if data: pli.scatter(self.C,self.R,c=data_col,marker='+')
+    pli.plot(self.Cp,self.Rp,label=label)

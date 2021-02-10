@@ -9,19 +9,20 @@ Read about the tcplFit approach in [The ToxCast Analysis Pipeline : An R Package
 Project Organization
 ------------
 
+    tcpl-py
     ├── LICENSE
-    ├── README.md          <- The top-level README for developers using this project.
-    ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-    │   └── dev
-    │         └──002-tcpl-v1.ipynb  
-    │
-    ├── requirements.txt   <- The requirements file for reproducing the analysis environment
-    ├── setup.py           <- makes project pip installable (pip install -e .) so src can be imported
-    └── src                <- Source code for use in this project.
-        └─ tcpl
-           └─ fit
-            └─ tcplfit.py    <- The R/tcpl wrapper
-
+    ├── notebooks
+    │   └── dev
+    │       └── 004-tcpl-v2.ipynb
+    ├── README.md
+    ├── requirements.txt
+    ├── setup.py
+    └── src
+        └── tcpl
+            └── fit
+                ├── crvfit.py
+                ├── multicf.py
+                └── rtcplhit.py
 
 --------
 

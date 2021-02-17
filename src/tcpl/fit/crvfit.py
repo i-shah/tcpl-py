@@ -18,7 +18,7 @@ from statsmodels import robust
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib as mpl
 from functools import reduce
-
+from typing import Union
 
 rtcpl = rpackages.importr('tcplfit2')
 
@@ -28,13 +28,51 @@ tcplhit2 = robjects.r(tcplhit2_in_r)
 
 class CurveFit:
   """
-  Python wrapper and utility functions for R/tcplfit2 package.
+  The CurveFit class finds a fit between a response variable (y) and a 
+  concentration variable (x) using pre-defined analytic functions using the R/tcplFit2
+  package. 
+  
   Most errors arise due to type mapping for conc, resp and cutoff from Py to R
   Some errors arise when fit fails and exceptions are not handled gracefully :) 
   Keep us posted about bugs
   """  
   
-  def __init__(self,conc=[],resp=[],cutoff=None,r_fill=0,hit_call=True,bmr_magic=1.349):
+  def __init__(self,
+               conc:Union[list,pd.Series]=[],
+               resp:Union[list,pd.Series]=[],
+               cutoff:float=None,
+               r_fill:float=0,
+               hit_call:bool=True,
+               bmr_magic:float=1.349):
+    """
+    Initialises CurveFit object
+    
+    Parameters
+    ----------
+    
+    conc : a list or array of floats 
+          - These are treatment values on a real scale (not log-transformed)
+          - They can be micromolar concentrations or mg/Kg/day dises
+          - The concenrations do not include the control 
+          
+    resp : a list of array of float response values 
+          - These are relative response values based on the comparison of treatment
+            with controls
+          - Units can be log2(fold change), Z-scores, etc.
+          
+    cutoff: float
+          - The minimum response value that will be used (see tcplfit2 documentation)
+          
+    r_fill: what to assign if response values are missing
+          - This is not currently used so caa be ignored
+          
+    hit_call: Boolean
+          - Should the tcplhit function be used to assess the quality of the fit on 
+            a [0-1] scale?
+    
+    
+    """
+    
     self.C = conc
     self.R = resp
     self.r0= cutoff
@@ -46,8 +84,92 @@ class CurveFit:
     self.Fits = None
     self.Hit  = None
     
-  def __call__(self, conc=[],resp=[],cutoff=None,assay=None, 
-               onesd=1,bmr_magic=None,summary=False,**kwargs):
+  def __call__(self, 
+               conc:Union[list,pd.Series]=[],
+               resp:Union[list,pd.Series]=[],
+               cutoff:float=None,
+               assay:str=None, 
+               onesd:float=1,
+               bmr_magic:float=None,
+               summary:bool=False,
+               **kwargs):
+    """
+    Does the CurveFit
+    
+    Parameters
+    ----------
+    
+    conc : a list or array of floats 
+          - These are treatment concentration values on a real scale (not log-transformed)
+          - They can be micromolar concentrations or mg/Kg/day dises
+          - The concenrations do not include the control 
+          - Overwrites the conc and resp data provided at initialisation
+          
+    resp : a list of array of float response values 
+          - These are relative response values based on the comparison of treatment
+            with controls
+          - Units can be log2(fold change), Z-scores, etc.
+          - Overwrites the conc and resp data provided at initialisation
+          
+    cutoff: float
+          - The minimum response value that will be used (see tcplfit2 documentation)
+          
+    assay: str, default=None
+          - The name of the "assay" or endpoint associated with the response 
+          - Not used for any purpose other than adding a key in the results that are returned
+          
+    onesd: float, default = 1
+          - The value of one standard deviation (SD) on the response scale
+          - This is calculated by the user based on their assumptions about the distribution
+            of the response values
+          - It is used to determine how many response values are above the background and by
+            how many SD
+          - It is also used to set the benchmark response (BMR) in terms of the response data
+            distribution
+          - The default value of 1 assume that the response is a Z-score
+            
+    bmr_magic: float, default = None
+          - The statistical fudge factor used to estimate the BMR where BMR = onesd * bmr_magic
+          - Read the tcplfit2 manuscript ;)
+          
+    summary: Boolean
+          - if a summary of the fit is returned from this function
+          
+          
+    Returns
+    -------
+    
+    data: a dict containing the following attrbutes (see tcplfit2 for documentation):-
+        - a
+        - ac10
+        - ac1sd
+        - ac20
+        - ac5
+        - ac50
+        - acc
+        - aic
+        - assay
+        - bmd
+        - bmdl
+        - bmdu
+        - bmr
+        - caikwt
+        - conc
+        - cutoff
+        - er
+        - fit_method
+        - hitcall
+        - mll
+        - model
+        - n_gt_cutoff
+        - p
+        - resp
+        - rmse
+        - top
+        - top_over_cutoff
+    """
+    
+    
     bmr_magic = bmr_magic if bmr_magic else self.bmr_magic
     self.fit(conc=conc,resp=resp,cutoff=float(cutoff))
     
@@ -56,6 +178,7 @@ class CurveFit:
     if assay: self.assay = assay
     if summary:
       return self.get_summary(BMR=[1])
+      #return pd.Series(self.get_summary(BMR=[1]))
     
     
   def get_summary(self,BMR=[-3,-2,-1,1,2,3]):
@@ -125,7 +248,7 @@ class CurveFit:
     for i, name in enumerate(vector.names):
         if isinstance(vector[i], ListVector) :
             result[name] = self.as_dict(vector[i])
-        elif type(vector[i])!=rpy2.rinterface.NULLType:
+        elif type(vector[i])!=rpy2.rinterface.NULL:
             if len(vector[i]) == 1:
                 x = vector[i][0]
                 #if not np.isnan(x):

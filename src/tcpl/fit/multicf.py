@@ -9,11 +9,14 @@ import pdb
 
 from joblib import Parallel, delayed, parallel_backend
 from joblib import wrap_non_picklable_objects
+import dill
+
 import json
 
 from functools import reduce
 import random,time 
-#from pathos.pools import ProcessPool
+from pathos.pools import ProcessPool
+from functools import partial
 
 from tcpl.fit.crvfit import *
 
@@ -28,7 +31,7 @@ class MultiCurveFit:
         self._Onesd= None
 
         
-    def __call__(self, Conc=[],Resp=[],Cutoff=None, 
+    def fit1(self, Conc=[],Resp=[],Cutoff=None, 
                 Onesd=1,bmr_magic=1,ret=False,
                 n_jobs=10,
                 **kwargs):
@@ -68,7 +71,69 @@ class MultiCurveFit:
             
         self._Hits = [json.loads(i) for i in Hits]
         if ret: return self._Hits
+
+    def __call__(self, *args,**kwargs):
+        """
+        Parallel multiple curve-fitting
+        
+        Parameters:
+        -----------
+        
+        
+        Conc = List/pd.Series of concentrations 
+        Resp = pd.DataFrame in which rows match concentrations in Conc and columns 
+               are L2FC values for individual endpoints
+        Cutoff=pd.Series in which index corresponds to the columns in Resp and values
+               are the cutoffs for individual endpoints
+        Onesd =pd.Series in which index corresponds to the columns in Resp and values
+               are one standard deviation for individual endpoints
+        n_jobs= number of parallel threads
+        """
+        return self.fitp(*args,**kwargs)
+          
+    def fitp(self, Conc=[],Resp=[],Cutoff=None, 
+                    Onesd=1,bmr_magic=1,ret=False,
+                    n_jobs=10,
+                    **kwargs):
+        """
+        Parallel multiple curve-fitting
+        
+        Parameters:
+        -----------
+        
+        
+        Conc = List/pd.Series of concentrations 
+        Resp = pd.DataFrame in which rows match concentrations in Conc and columns 
+               are L2FC values for individual endpoints
+        Cutoff=pd.Series in which index corresponds to the columns in Resp and values
+               are the cutoffs for individual endpoints
+        Onesd =pd.Series in which index corresponds to the columns in Resp and values
+               are one standard deviation for individual endpoints
+        n_jobs= number of parallel threads
+        """
+
+        self._Conc = Conc = list(Conc)
+        self._Resp = Resp
+        self._Cutoff=Cutoff
+        self._Onesd= Onesd
+
+        def myfunc(args):
+          C,Z,co,assay,osd=args
+          CF = CurveFit(**self._CF_kw)
+          H  = CF(C,Z,cutoff=co,assay=assay,onesd=osd,summary=True)
+          return H
+        
+        PP = ProcessPool(n_jobs)
+        
+        Hits = PP.map(myfunc,[(Conc,list(Resp[x]),float(Cutoff[x]),x,float(Onesd[x])) for x in Resp.columns])       
+        
+        PP.close()
+        PP.join()
+        PP.clear()
+        self._Hits = Hits
+        if ret: return self._Hits
             
+        
     def fits(self, Conc=[],Resp=[],Cutoff=None, 
                  Onesd=1,bmr_magic=1,ret=False,**kwargs):
         """

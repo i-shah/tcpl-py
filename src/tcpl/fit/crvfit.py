@@ -92,9 +92,11 @@ class CurveFit:
                onesd:float=1,
                bmr_magic:float=None,
                summary:bool=False,
+               fitmodels:list=["cnst", "hill", "poly1", "poly2", "gnls",
+                              "pow", "exp2", "exp3""exp4", "exp5"],
                **kwargs):
     """
-    Does the CurveFit
+    Does the CurveFit Read using tcplfit:tcplfit2_core on CRAN
     
     Parameters
     ----------
@@ -134,7 +136,9 @@ class CurveFit:
           
     summary: Boolean
           - if a summary of the fit is returned from this function
-          
+     
+    fitmodels: list
+          - which models to use for fitting
           
     Returns
     -------
@@ -171,7 +175,7 @@ class CurveFit:
     
     
     bmr_magic = bmr_magic if bmr_magic else self.bmr_magic
-    self.fit(conc=conc,resp=resp,cutoff=float(cutoff))
+    self.fit(conc=conc,resp=resp,cutoff=float(cutoff),fitmodels=fitmodels)
     
     if self.hit_call and self.best!='cnst': 
       self.hit(onesd=onesd,bmr_magic=bmr_magic,cutoff=cutoff)
@@ -192,14 +196,17 @@ class CurveFit:
       
     return Summary
     
-  def fit(self,conc=[],resp=[],cutoff=None):
+  def fit(self,conc=[],resp=[],cutoff=None,
+          fitmodels=["cnst", "hill", "poly1", "poly2", 
+                     "pow", "exp2", "exp3""exp4", "exp5"]):
     self.C = conc if len(conc)>0 else self.C
     self.R = resp if len(resp)>0 else self.R
     self.r0= cutoff if cutoff else self.r0
     
     kwargs={'conc':FloatVector(self.C),
             'resp':FloatVector(self.R),
-            'bidirectional':True
+            'bidirectional':True,
+            'fitmodels': fitmodels
            }
     if cutoff:
         kwargs['cutoff']=1.0*self.r0
